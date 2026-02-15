@@ -74,3 +74,26 @@ def generate_rag_response(vector_store_id: str, query: str):
         }]
     )
     return response.output_text
+
+def list_indexed_files(vector_store_id: str):
+    """List all files currently in the Vector Store. """
+    files= client.vector_stores.files.list(vector_store_id=vector_store_id)
+    return [{"id":f.id,"status":f.status}for f in files.data]
+
+def list_all_vector_stores():
+    """List all Vector Stores in your OpenAI account. """ 
+    stores = client.vector_stores.list()
+    return [{"id":s.id, "name":s.name,"created_at":s.created_at} for s in stores.data ]
+
+def delete_vector_store(vector_store_id: str):
+    """Delete the store from OpenAI and clear it from our local DB."""
+    # 1. Delete from OpenAI
+    client.vector_stores.delete(vector_store_id=vector_store_id)
+
+    # 2. Clear from local SQLite so the app wor't try to use a deleted ID
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM settings WHERE key='vector_store_id'")
+    conn.commit()
+    conn.close()
+    return True
