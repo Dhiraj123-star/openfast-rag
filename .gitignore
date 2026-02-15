@@ -25,3 +25,6 @@ Thumbs.db
 # IDE specific files
 .vscode/
 .idea/
+
+# add dockerignore  
+.dockerignore
