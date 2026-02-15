@@ -1,0 +1,27 @@
+# Python environment and cache
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+venv/
+env/
+.venv/
+
+# Project specific data
+data/*
+!data/.gitkeep
+
+# Ignore document types globally
+*.pdf
+*.txt
+*.docx
+
+!requirements.txt
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# IDE specific files
+.vscode/
+.idea/
