@@ -7,7 +7,10 @@ from app.openai_utils import (
     init_db,
     get_or_create_vector_store,
     upload_and_index_file,
-    generate_rag_response
+    generate_rag_response,
+    list_indexed_files,
+    list_all_vector_stores,
+    delete_vector_store
 )
 
 @asynccontextmanager
@@ -57,3 +60,36 @@ async def ask_question(request: QueryRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/admin/status")
+async def get_admin_status():
+    """Returns details of the current store and all stores in the account. """
+    current_vs_id = get_or_create_vector_store()
+    try:
+        current_files = list_indexed_files(current_vs_id)
+        all_stores = list_all_vector_stores()
+
+        return {
+            "active_store":{
+                "id":current_vs_id,
+                "files":current_files,
+                "file_count":len(current_files)
+            },
+            "account_overview":{
+                "total_vector_stores":len(all_stores),
+                "all_stores":all_stores
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500,detail=str(e))
+
+@app.delete("/admin/reset")
+async def reset_system():
+    """Deletes the current vector store and resets the local database."""
+    current_vs_id = get_or_create_vector_store()
+    try:
+        delete_vector_store(current_vs_id)
+        return {"message":f"Vector Store {current_vs_id} deleted and local database reset."}
+    except Exception as e:
+        raise HTTPException(status_code=500,detail=f"Reset failed: {str(e)}")
+
