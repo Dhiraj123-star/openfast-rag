@@ -97,3 +97,24 @@ def delete_vector_store(vector_store_id: str):
     conn.commit()
     conn.close()
     return True
+
+def delete_specific_vector_store(vector_store_id: str):
+    """Delete a specific vector store by ID from OpenAI and local DB if applicable"""
+    # 1. Delete from OpenAI
+    client.vector_stores.delete(vector_store_id=vector_store_id)
+    # 2. If this was our active store,clear it from SQlite
+    if get_persistent_vector_id() == vector_store_id:
+        conn = sqlite3.connect(DB_PATH)
+        cursor= conn.cursor()
+        cursor.execute("DELETE FROM settings WHERE key='vector_store_id'")
+        conn.commit()
+        conn.close()
+    return True
+
+def remove_file_from_store(vector_store_id: str,file_id: str):
+    """Removes a specific file from the vector store. """
+    return client.vector_stores.files.delete(
+        vector_store_id=vector_store_id,
+        file_id =file_id
+    )
+
