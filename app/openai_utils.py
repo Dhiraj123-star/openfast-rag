@@ -1,96 +1,111 @@
 import os
 import sqlite3
-from openai import OpenAI
+from openai import AsyncOpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Initialize Async Client
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=120.0)
 
 # Get the absolute path to directory of this file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 DB_PATH = os.path.join(BASE_DIR, "data", "storage.db")
 
 def init_db():
     """Initialise SQLite database to store"""
-    # Ensure directory exists before connecting
-    os.makedirs(os.path.dirname(DB_PATH),exist_ok=True)
-    conn= sqlite3.connect(DB_PATH)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute(
-        '''
-        CREATE TABLE IF NOT EXISTS settings
-        (key TEXT PRIMARY KEY, value TEXT)
-    ''')    
+    cursor.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)')    
     conn.commit()
     conn.close()
     print(f"✅ Database initialized at: {DB_PATH}")
 
 def get_persistent_vector_id():
     """Retrieve the stored ID from the local database"""
-    conn= sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT value FROM settings WHERE key='vector_store_id'")
-    row= cursor.fetchone()          
+    row = cursor.fetchone()          
     conn.close()
     return row[0] if row else None
 
-def save_vector_id(vs_id:str):
+def save_vector_id(vs_id: str):
     """Save the ID to the local database"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)",
-                    ('vector_store_id',vs_id))
+    cursor.execute("INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)", ('vector_store_id', vs_id))
     conn.commit()
     conn.close()
 
-def get_or_create_vector_store(name: str = "OpenFast-RAG-Store"):
+async def get_or_create_vector_store(name: str = "OpenFast-RAG-Store"):
     """Check for existing store or create a new one."""
-    # 1. Try to get from local DB first
     existing_id = get_persistent_vector_id()
     if existing_id:
         return existing_id
-    # If not found , create new one at OpenAI
-    vector_store = client.vector_stores.create(name=name)
+    
+    
+    vector_store = await client.vector_stores.create(name=name)
     save_vector_id(vector_store.id)
     return vector_store.id
 
-def upload_and_index_file(vector_store_id: str, file_path: str):
+async def upload_and_index_file(vector_store_id: str, file_path: str):
     """Uploads a file to OpenAI and attaches it to the vector store."""
     with open(file_path, "rb") as f:
-        file_batch = client.vector_stores.file_batches.upload_and_poll(
+        
+        file_batch = await client.vector_stores.file_batches.upload_and_poll(
             vector_store_id=vector_store_id, files=[f]
         )
     return file_batch
 
-def generate_rag_response(vector_store_id: str, query: str):
+async def generate_rag_response(vector_store_id: str, query: str):
     """Uses the Responses API to search the vector store and answer."""
-    response = client.responses.create(
+    response = await client.responses.create(
+        model="gpt-4o",
+        input=query, # input instead of messages
+        tools=[{
+            "type": "file_search",
+            "vector_store_ids": [vector_store_id] # specify your store here
+        }]
+    )
+    return response.output_text
+
+async def generate_rag_response_stream(vector_store_id: str, query: str):
+    """Streams the RAG response chunk by chunk."""
+    stream = await client.responses.create(
         model="gpt-4o",
         input=query,
         tools=[{
             "type": "file_search",
             "vector_store_ids": [vector_store_id]
-        }]
-    )
-    return response.output_text
+        }],
+        stream=True
+    ) 
+    async for event in stream:
+        # The Responses API uses event types for streaming
+        if event.type == "response.output_text.delta":
+            yield event.delta
 
-def list_indexed_files(vector_store_id: str):
-    """List all files currently in the Vector Store. """
-    files= client.vector_stores.files.list(vector_store_id=vector_store_id)
-    return [{"id":f.id,"status":f.status}for f in files.data]
+async def list_indexed_files(vector_store_id: str):
+    """List all files. Fixed AsyncPaginator and Namespace."""
+    files = []
+    
+    async for f in client.vector_stores.files.list(vector_store_id=vector_store_id):
+        files.append({"id": f.id, "status": f.status})
+    return files
 
-def list_all_vector_stores():
-    """List all Vector Stores in your OpenAI account. """ 
-    stores = client.vector_stores.list()
-    return [{"id":s.id, "name":s.name,"created_at":s.created_at} for s in stores.data ]
+async def list_all_vector_stores():
+    """List all stores. Fixed AsyncPaginator and Namespace.""" 
+    stores = []
+    
+    async for s in client.vector_stores.list():
+        stores.append({"id": s.id, "name": s.name, "created_at": s.created_at})
+    return stores
 
-def delete_vector_store(vector_store_id: str):
-    """Delete the store from OpenAI and clear it from our local DB."""
-    # 1. Delete from OpenAI
-    client.vector_stores.delete(vector_store_id=vector_store_id)
-
-    # 2. Clear from local SQLite so the app wor't try to use a deleted ID
+async def delete_vector_store(vector_store_id: str):
+    """Delete the store."""
+    
+    await client.vector_stores.delete(vector_store_id=vector_store_id)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("DELETE FROM settings WHERE key='vector_store_id'")
@@ -98,23 +113,22 @@ def delete_vector_store(vector_store_id: str):
     conn.close()
     return True
 
-def delete_specific_vector_store(vector_store_id: str):
-    """Delete a specific vector store by ID from OpenAI and local DB if applicable"""
-    # 1. Delete from OpenAI
-    client.vector_stores.delete(vector_store_id=vector_store_id)
-    # 2. If this was our active store,clear it from SQlite
+async def delete_specific_vector_store(vector_store_id: str):
+    """Delete specific store."""
+    
+    await client.vector_stores.delete(vector_store_id=vector_store_id)
     if get_persistent_vector_id() == vector_store_id:
         conn = sqlite3.connect(DB_PATH)
-        cursor= conn.cursor()
+        cursor = conn.cursor()
         cursor.execute("DELETE FROM settings WHERE key='vector_store_id'")
         conn.commit()
         conn.close()
     return True
 
-def remove_file_from_store(vector_store_id: str,file_id: str):
-    """Removes a specific file from the vector store. """
-    return client.vector_stores.files.delete(
+async def remove_file_from_store(vector_store_id: str, file_id: str):
+    """Removes a file from the vector store."""
+    
+    return await client.vector_stores.files.delete(
         vector_store_id=vector_store_id,
-        file_id =file_id
+        file_id=file_id
     )
-
