@@ -10,7 +10,9 @@ from app.openai_utils import (
     generate_rag_response,
     list_indexed_files,
     list_all_vector_stores,
-    delete_vector_store
+    delete_vector_store,
+    delete_specific_vector_store,
+    remove_file_from_store
 )
 
 @asynccontextmanager
@@ -93,3 +95,20 @@ async def reset_system():
     except Exception as e:
         raise HTTPException(status_code=500,detail=f"Reset failed: {str(e)}")
 
+@app.delete("/admin/delete{vector_id}")
+async def delete_vector_id(vector_id: str):
+    """Deletes a specific Vector Store ID from OpenAI and resets local DB if it was active."""
+    try:
+        delete_specific_vector_store(vector_id)
+        return {"message":f"Vector Store {vector_id} has been permanently deleted."}
+    except Exception as e:
+        raise HTTPException(status_code=500,detail=f"Deletion failed: {str(e)}")
+
+@app.delete("/admin/files/{file_id}")
+async def delete_file(file_id: str):
+    vs_id = get_or_create_vector_store()
+    try:
+        remove_file_from_store(vs_id,file_id)
+        return {"message":f"File {file_id} removed from store {vs_id}."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
