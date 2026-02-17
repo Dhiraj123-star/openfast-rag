@@ -1,134 +1,166 @@
 import os
-import sqlite3
-from openai import AsyncOpenAI
-from dotenv import load_dotenv
-from fastapi import FastAPI
+import shutil
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import Request
+from app.models import QueryRequest, QueryResponse, UploadResponse
+from app.openai_utils import (
+    init_db,
+    get_or_create_vector_store,
+    upload_and_index_file,
+    generate_rag_response,
+    list_indexed_files,
+    list_all_vector_stores,
+    delete_vector_store,
+    delete_specific_vector_store,
+    remove_file_from_store,
+    generate_rag_response_stream
+)
 
-load_dotenv()
-# Using beta features requires the beta namespace in newer SDKs
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=120.0)
+# Setup Templates
+templates = Jinja2Templates(directory="templates")
 
-app = FastAPI(title="OpenFast-RAG")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
 
-# Get the absolute path to directory of this file
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+app = FastAPI(title="OpenFast-RAG", lifespan=lifespan)
 
-DB_PATH = os.path.join(BASE_DIR, "data", "storage.db")
+@app.get("/", response_class=HTMLResponse)
+async def chat_interface(request: Request):
+    """Serves the chat dashboard"""
+    return templates.TemplateResponse("chat.html", {"request": request})
 
-def init_db():
-    """Initialise SQLite database to store"""
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute(
-        '''
-        CREATE TABLE IF NOT EXISTS settings
-        (key TEXT PRIMARY KEY, value TEXT)
-    ''')    
-    conn.commit()
-    conn.close()
-    print(f"✅ Database initialized at: {DB_PATH}")
+@app.get("/chat/stream")
+async def chat_stream(question: str):
+    # Added await here
+    vs_id = await get_or_create_vector_store()
 
-def get_persistent_vector_id():
-    """Retrieve the stored ID from the local database"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE key='vector_store_id'")
-    row = cursor.fetchone()          
-    conn.close()
-    return row[0] if row else None
+    async def event_generator():
+        try:
+            async for chunk in generate_rag_response_stream(vs_id, question):
+                yield f"data: {chunk}\n\n"
+        except Exception as e:
+            # Send the error to the frontend so it doesn't just hang
+            error_msg = "Request timed out. Please try again in a moment." if "timeout" in str(e).lower() else str(e)
+            yield f"data: ⚠️ Error: {error_msg}\n\n"
+        yield "data: [DONE]\n\n"
+        
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
-def save_vector_id(vs_id: str):
-    """Save the ID to the local database"""
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)",
-                    ('vector_store_id', vs_id))
-    conn.commit()
-    conn.close()
-
-async def get_or_create_vector_store(name: str = "OpenFast-RAG-Store"):
-    """Check for existing store or create a new one."""
-    existing_id = get_persistent_vector_id()
-    if existing_id:
-        return existing_id
+@app.post("/upload", response_model=UploadResponse)
+async def upload_document(file: UploadFile = File(...)):
+    file_path = f"data/{file.filename}"
     
-    # Path: client.beta.vector_stores
-    vector_store = await client.beta.vector_stores.create(name=name)
-    save_vector_id(vector_store.id)
-    return vector_store.id
+    # Save file locally
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
 
-async def upload_and_index_file(vector_store_id: str, file_path: str):
-    """Uploads a file to OpenAI and attaches it to the vector store."""
-    with open(file_path, "rb") as f:
-        # Path: client.beta.vector_stores.file_batches
-        file_batch = await client.beta.vector_stores.file_batches.upload_and_poll(
-            vector_store_id=vector_store_id, files=[f]
-        )
-    return file_batch
+    try:
+        # Added await here
+        vs_id = await get_or_create_vector_store()
 
-async def generate_rag_response(vector_store_id: str, query: str):
-    """Uses the Responses API to search the vector store and answer (Sync version)."""
-    response = await client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": query}],
-        tools=[{"type": "file_search"}],
-        tool_choice="auto"
-    )
-    return response.choices[0].message.content
+        # Index file
+        await upload_and_index_file(vs_id, file_path)
+        
+        # Cleanup local file
+        os.remove(file_path)
 
-async def generate_rag_response_stream(vector_store_id: str, query: str):
-    """Streams the RAG response chunk by chunk."""
-    stream = await client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "user", "content": query}],
-        tools=[{"type": "file_search"}],
-        stream=True
-    ) 
-    async for chunk in stream:
-        if chunk.choices and chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
+        return {
+            "message": "File processed and indexed",
+            "vector_store_id": vs_id,
+            "file_id": "batch_upload_successful"
+        }
+    except Exception as e:
+        if os.path.exists(file_path): os.remove(file_path)
+        raise HTTPException(status_code=500, detail=str(e))
 
-async def list_indexed_files(vector_store_id: str):
-    """List all files. Fixed AsyncPaginator error and namespace."""
-    files = []
-    # Correct Path: client.beta.vector_stores.files.list
-    async for f in client.beta.vector_stores.files.list(vector_store_id=vector_store_id):
-        files.append({"id": f.id, "status": f.status})
-    return files
+@app.post("/ask", response_model=QueryResponse)
+async def ask_question(request: QueryRequest):
+    # Added await here
+    vs_id = await get_or_create_vector_store()
+    try:
+        answer = await generate_rag_response(vs_id, request.question)
+        return {
+            "answer": answer,
+            "vector_store_id": vs_id
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-async def list_all_vector_stores():
-    """List all stores. Fixed AsyncPaginator error and namespace.""" 
-    stores = []
-    # Correct Path: client.beta.vector_stores.list
-    async for s in client.beta.vector_stores.list():
-        stores.append({"id": s.id, "name": s.name, "created_at": s.created_at})
-    return stores
+@app.get("/admin/status")
+async def get_admin_status():
+    """Returns details of the current store and all stores in the account. """
+    # Added await here
+    current_vs_id = await get_or_create_vector_store()
+    try:
+        # Added await to both list helper functions
+        current_files = await list_indexed_files(current_vs_id)
+        all_stores = await list_all_vector_stores()
 
-async def delete_vector_store(vector_store_id: str):
-    """Delete the store."""
-    await client.beta.vector_stores.delete(vector_store_id=vector_store_id)
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM settings WHERE key='vector_store_id'")
-    conn.commit()
-    conn.close()
-    return True
+        return {
+            "active_store": {
+                "id": current_vs_id,
+                "files": current_files,
+                "file_count": len(current_files)
+            },
+            "account_overview": {
+                "total_vector_stores": len(all_stores),
+                "all_stores": all_stores
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-async def delete_specific_vector_store(vector_store_id: str):
-    """Delete specific store."""
-    await client.beta.vector_stores.delete(vector_store_id=vector_store_id)
-    if get_persistent_vector_id() == vector_store_id:
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM settings WHERE key='vector_store_id'")
-        conn.commit()
-        conn.close()
-    return True
+@app.delete("/admin/reset")
+async def reset_system():
+    """Deletes the current vector store and resets the local database."""
+    # Added await here
+    current_vs_id = await get_or_create_vector_store()
+    try:
+        # Added await here
+        await delete_vector_store(current_vs_id)
+        return {"message": f"Vector Store {current_vs_id} deleted and local database reset."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reset failed: {str(e)}")
 
-async def remove_file_from_store(vector_store_id: str, file_id: str):
-    """Removes a file from the vector store."""
-    return await client.beta.vector_stores.files.delete(
-        vector_store_id=vector_store_id,
-        file_id=file_id
-    )
+@app.delete("/admin/delete/{vector_id}")
+async def delete_vector_id(vector_id: str):
+    """Deletes a specific Vector Store ID from OpenAI and resets local DB if it was active."""
+    try:
+        # Added await here
+        await delete_specific_vector_store(vector_id)
+        return {"message": f"Vector Store {vector_id} has been permanently deleted."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Deletion failed: {str(e)}")
+
+@app.delete("/admin/files/{file_id}")
+async def delete_file(file_id: str):
+    # Added await here
+    vs_id = await get_or_create_vector_store()
+    try:
+        # Added await here
+        await remove_file_from_store(vs_id, file_id)
+        return {"message": f"File {file_id} removed from store {vs_id}."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/upload/chat")
+async def upload_chat_document(file: UploadFile = File(...)):
+    """Special upload endpoint for the Chat UI that returns clean JSON. """
+    file_path = f"data/{file.filename}"
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    try:
+        # Added await here
+        vs_id = await get_or_create_vector_store()
+        await upload_and_index_file(vs_id, file_path)
+        os.remove(file_path)
+        return {"filename": file.filename, "status": "success"}
+    except Exception as e:
+        if os.path.exists(file_path): os.remove(file_path)
+        return {"status": "error", "detail": str(e)}
+    
