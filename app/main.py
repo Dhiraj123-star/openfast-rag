@@ -7,6 +7,8 @@ load_dotenv()
 # Using beta features requires the beta namespace in newer SDKs
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=120.0)
 
+app = FastAPI(title="OpenFast-RAG")
+
 # Get the absolute path to directory of this file
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
