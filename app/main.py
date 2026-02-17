@@ -2,6 +2,7 @@ import os
 import sqlite3
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
+from fastapi import FastAPI
 
 load_dotenv()
 # Using beta features requires the beta namespace in newer SDKs
