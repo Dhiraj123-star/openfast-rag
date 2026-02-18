@@ -1,7 +1,10 @@
 services:
   api:
-    build: .
+    # 1. Add  Docker Hub image name here
+    image: dhiraj918106/openfast_rag_container:latest
     container_name: openfast_rag_container
+    # 2. Add this pull policy to force checking the registry
+    pull_policy: always
     ports:
       - "8000:8000"
     env_file:
