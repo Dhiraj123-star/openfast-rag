@@ -28,3 +28,6 @@ Thumbs.db
 
 # add dockerignore  
 .dockerignore
+
+# add k8s secrets
+k8s/secrets.yaml
