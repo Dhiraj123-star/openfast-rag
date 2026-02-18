@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openfast-rag
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openfast-rag
+  template:
+    metadata:
+      labels:
+        app: openfast-rag
+    spec:
+      containers:
+      - name: openfast-rag
+        image: dhiraj918106/openfast_rag_container:latest
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8000
+        env:
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: rag-secrets
+              key: OPENAI_API_KEY
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: storage-volume
+          mountPath: /app/data
+      volumes:
+      - name: storage-volume
+        persistentVolumeClaim:
+          claimName: rag-data-pvc
