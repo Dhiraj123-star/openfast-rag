@@ -7,9 +7,9 @@
 * **Interactive Chat Dashboard**: A modern, front-end interface built with **Jinja2 templates** for seamless document interaction.
 * **Real-Time SSE Streaming**: Leverages **Server-Sent Events (SSE)** to stream RAG responses token-by-token.
 * **Automated CI/CD**: Fully integrated with **GitHub Actions** to build and push the production-ready Docker image to Docker Hub automatically on every push.
+* **Ultra-Slim Docker Image**: Optimized using **multi-stage builds** to ensure a minimal footprint (~100MB) and fast deployment.
 * **Persistent Knowledge Base**: Uses a local **SQLite** database to remember your Vector Store ID across server restarts.
 * **Context-Aware Reasoning**: Uses the latest **OpenAI Responses API** with `file_search` for accurate, grounded answers.
-* **Dockerized Infrastructure**: Fully containerized with `docker-compose` for environment isolation and one-command setup.
 
 ---
 
@@ -19,9 +19,9 @@
 
 The project includes a GitHub Actions workflow that automates the deployment lifecycle:
 
-* **Build**: Compiles the FastAPI application into a Docker image.
+* **Multi-Stage Build**: Compiles dependencies in a build stage and copies only the essentials to the runtime image.
 * **Push**: Tags and pushes the image to `dhiraj918106/openfast_rag_container`.
-* **Versioning**: Every push generates a `latest` tag and a unique commit-SHA tag.
+* **Pull Policy**: Configured to always fetch the `latest` image from the registry during deployment.
 
 #### 2. Real-Time Streaming (`/chat/stream`)
 
@@ -40,8 +40,9 @@ OPENAI_API_KEY=sk-proj-xxxx...
 
 
 2. **Launch with Docker**:
+The system is configured to always pull the latest optimized image:
 ```bash
-docker-compose up --build
+docker-compose pull && docker-compose up -d
 
 ```
 
@@ -67,6 +68,8 @@ Navigate to `http://localhost:8000/` for the Chat UI.
 
 **Docker Hub Repository**: `dhiraj918106/openfast_rag_container`
 
-**Pipeline**: Triggered on `push` to `main` branch.
+**Image Optimization**: Multi-stage Python 3.11-slim
+
+**Pull Policy**: `always`
 
 ---
