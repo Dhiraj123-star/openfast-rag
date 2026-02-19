@@ -6,49 +6,53 @@
 
 * **Interactive Chat Dashboard**: A modern, front-end interface built with **Jinja2 templates** for seamless document interaction.
 * **Real-Time SSE Streaming**: Leverages **Server-Sent Events (SSE)** to stream RAG responses token-by-token.
-* **Automated CI/CD**: Fully integrated with **GitHub Actions** to build and push the production-ready Docker image to Docker Hub automatically on every push.
-* **Ultra-Slim Docker Image**: Optimized using **multi-stage builds** to ensure a minimal footprint (~100MB) and fast deployment.
-* **Persistent Knowledge Base**: Uses a local **SQLite** database to remember your Vector Store ID across server restarts.
-* **Context-Aware Reasoning**: Uses the latest **OpenAI Responses API** with `file_search` for accurate, grounded answers.
+* **Automated CI/CD**: Integrated with **GitHub Actions** for automated builds and pushes to Docker Hub.
+* **Kubernetes Ready**: Now includes modular **K8s manifests** for deployment on clusters like **Minikube**, featuring persistent storage and secret management.
+* **Ultra-Slim Docker Image**: Optimized using **multi-stage builds** (~100MB) for rapid deployment.
+* **Persistent Knowledge Base**: Uses a local **SQLite** database and K8s **Persistent Volume Claims (PVC)** to ensure data continuity.
 
 ---
 
 ### 🛠️ Functionality Overview
 
-#### 1. CI/CD & Automation
+#### 1. Kubernetes Migration (`/k8s`)
 
-The project includes a GitHub Actions workflow that automates the deployment lifecycle:
+The project has shifted from simple Docker Compose to a production-ready Kubernetes structure:
 
-* **Multi-Stage Build**: Compiles dependencies in a build stage and copies only the essentials to the runtime image.
-* **Push**: Tags and pushes the image to `dhiraj918106/openfast_rag_container`.
-* **Pull Policy**: Configured to always fetch the `latest` image from the registry during deployment.
+* **`deployment.yaml`**: Manages app scaling and lifecycle.
+* **`service.yaml`**: Exposes the app via NodePort for local access.
+* **`pvc.yaml`**: Ensures the SQLite database survives pod restarts.
+* **`secrets.yaml`**: Securely handles sensitive API keys (excluded from source control).
 
 #### 2. Real-Time Streaming (`/chat/stream`)
 
-Uses asynchronous generators to push data chunks to the UI as they are generated, providing an instant feedback loop for the user.
+Uses asynchronous generators to push data chunks to the UI as they are generated, providing an instant feedback loop.
 
 ---
 
-### 🚦 Quick Start (Docker - Recommended)
+### 🚦 Quick Start (Kubernetes/Minikube)
 
-1. **Environment Setup**:
-Add your API key to a `.env` file in the root:
+1. **Secret Setup**:
+Create your secret locally (or use a `secrets.yaml` and add to `.gitignore`):
+
 ```bash
-OPENAI_API_KEY=sk-proj-xxxx...
+kubectl create secret generic rag-secrets --from-literal=OPENAI_API_KEY='your-key-here'
 
 ```
 
+2. **Deploy to Cluster**:
 
-2. **Launch with Docker**:
-The system is configured to always pull the latest optimized image:
 ```bash
-docker-compose pull && docker-compose up -d
+kubectl apply -f k8s/
 
 ```
-
 
 3. **Access the Dashboard**:
-Navigate to `http://localhost:8000/` for the Chat UI.
+
+```bash
+minikube service openfast-rag-service --url
+
+```
 
 ---
 
@@ -64,12 +68,10 @@ Navigate to `http://localhost:8000/` for the Chat UI.
 
 ---
 
-### 📦 CI/CD Deployment Info
+### 📦 Infrastructure Info
 
-**Docker Hub Repository**: `dhiraj918106/openfast_rag_container`
-
-**Image Optimization**: Multi-stage Python 3.11-slim
-
-**Pull Policy**: `always`
+* **Docker Hub**: `dhiraj918106/openfast_rag_container`
+* **Orchestration**: Kubernetes (Minikube compatible)
+* **Storage**: Persistent Volume Claim (1Gi)
 
 ---
