@@ -6,10 +6,10 @@
 
 * **Interactive Chat Dashboard**: A modern, front-end interface built with **Jinja2 templates** for seamless document interaction.
 * **Real-Time SSE Streaming**: Leverages **Server-Sent Events (SSE)** to stream responses token-by-token for a "ChatGPT-like" experience.
-* **Production-Grade Kubernetes**: Modular **K8s manifests** optimized for Minikube, including Ingress routing and health probes.
-* **Custom Domain Routing**: Access your engine locally via `http://rag.local` using Kubernetes Ingress.
+* **Production-Grade Kubernetes**: Modular **K8s manifests** optimized for Minikube, featuring Ingress routing, health probes, and resource limits.
+* **Secure HTTPS Access**: End-to-end encryption using **TLS/SSL certificates** for the `rag.local` domain.
 * **Ultra-Slim Docker Image**: Optimized via **multi-stage builds** (~100MB) to ensure fast pulls and minimal overhead.
-* **Persistent Knowledge Base**: Uses **SQLite** and K8s **Persistent Volume Claims (PVC)** so your data survives pod restarts.
+* **Persistent Knowledge Base**: Uses **SQLite** and K8s **Persistent Volume Claims (PVC)** to ensure data survives pod restarts.
 
 ---
 
@@ -19,10 +19,10 @@
 
 The system is architected for scalability and reliability:
 
-* **`ingress.yaml`**: Routes traffic from `rag.local` to the internal service.
-* **`deployment.yaml`**: Defines resource limits, liveness/readiness probes, and scaling.
-* **`pvc.yaml`**: Manages a 1Gi persistent volume for the SQLite database.
-* **`secrets.yaml`**: (Git-ignored) Securely injects the `OPENAI_API_KEY`.
+* **`ingress.yaml`**: Manages secure HTTPS traffic and routes `rag.local` to the internal service.
+* **`deployment.yaml`**: Configures self-healing via liveness/readiness probes and resource quotas.
+* **`pvc.yaml`**: Ensures persistent storage for the RAG knowledge base.
+* **`secrets.yaml`**: Securely handles sensitive API keys and TLS certificates.
 
 #### 2. Real-Time Streaming (`/chat/stream`)
 
@@ -40,9 +40,15 @@ minikube addons enable ingress
 ```
 
 
-2. **Secret Setup**:
-Create your secret locally:
+2. **Security & Secret Setup**:
 ```bash
+# Generate self-signed SSL certificate
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout rag-local.key -out rag-local.crt -subj "/CN=rag.local"
+
+# Create TLS Secret
+kubectl create secret tls rag-tls-secret --key rag-local.key --cert rag-local.crt
+
+# Create OpenAI Secret
 kubectl create secret generic rag-secrets --from-literal=OPENAI_API_KEY='your-key-here'
 
 ```
@@ -52,14 +58,14 @@ kubectl create secret generic rag-secrets --from-literal=OPENAI_API_KEY='your-ke
 ```bash
 kubectl apply -f k8s/
 
-# Add Minikube IP to your hosts file
+# Map Minikube IP to rag.local
 echo "$(minikube ip) rag.local" | sudo tee -a /etc/hosts
 
 ```
 
 
 4. **Access the Dashboard**:
-Navigate to **`http://rag.local`** in your browser.
+Navigate to **`https://rag.local`** (Accept the self-signed certificate warning).
 
 ---
 
@@ -78,8 +84,8 @@ Navigate to **`http://rag.local`** in your browser.
 ### 📦 Infrastructure Info
 
 * **Docker Hub**: `dhiraj918106/openfast_rag_container`
-* **Orchestration**: Kubernetes / Kustomize
-* **Local Domain**: `rag.local`
+* **Orchestration**: Kubernetes
+* **Security**: TLS/SSL Encryption (HTTPS)
 * **Storage**: 1Gi Persistent Volume Claim
 
 ---
