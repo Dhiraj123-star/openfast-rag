@@ -4,9 +4,14 @@ metadata:
   name: openfast-rag-ingress
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
+  tls:
+  - hosts:
+    - rag.local
+    secretName: rag-tls-secret
   rules:
-  - host: rag.local
+  - host: rag.local 
     http:
       paths:
       - path: /

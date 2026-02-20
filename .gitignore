@@ -31,3 +31,6 @@ Thumbs.db
 
 # add k8s secrets
 k8s/secrets.yaml
+# Ignore certs file
+*.crt
+*.key
